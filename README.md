@@ -35,15 +35,19 @@ Implemented:
 - nonce mining against template target.
 - full block serialization.
 - optional `submitblock`.
-- unit tests for critical serialization / hashing boundaries.
+- automated Bitcoin Core regtest acceptance script.
+- automated non-empty mempool block script (`nTx >= 2`).
+- Stratum v1 message/parser skeleton with local mock-pool handshake test.
+- local-first hardware/dashboard abstraction inspired by MinerWatch / Avalon Q Controller.
+- unit and integration tests for critical serialization / hashing / protocol boundaries.
 
 Not implemented yet:
 
-- Stratum pool protocol.
-- ASIC integration.
+- production Stratum reconnecting miner loop.
+- ASIC/cgminer/Bitaxe/Avalon device adapters.
 - full transaction policy engine; this trusts Bitcoin Core's template.
 - dynamic extranonce / ntime rolling after nonce space exhaustion.
-- production observability / metrics.
+- production observability / metrics dashboard.
 
 ## Repository layout
 
@@ -61,6 +65,13 @@ src/
   miner.rs      orchestration from RPC template to candidate block
   submit.rs     submitblock wrapper
   crypto.rs     sha256d, hash endian conversion, target comparison
+  stratum.rs    Stratum v1 parser/client-line skeleton
+  hardware.rs   local-first miner-device/dashboard abstraction
+scripts/
+  regtest_acceptance.sh      coinbase-only submitblock acceptance test
+  regtest_nonempty_block.sh  mempool transaction inclusion acceptance test
+docs/
+  bitcoinminer-topic-integration.md
 ```
 
 ## Build and test
@@ -70,6 +81,8 @@ cargo fmt
 cargo test
 cargo clippy -- -D warnings
 cargo run -- doctor
+./scripts/regtest_acceptance.sh
+./scripts/regtest_nonempty_block.sh
 ```
 
 ## Regtest usage
