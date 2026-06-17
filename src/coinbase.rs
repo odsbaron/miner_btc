@@ -36,7 +36,8 @@ pub fn build_coinbase(spec: &CoinbaseSpec) -> Result<CoinbaseTx> {
     raw.extend_from_slice(&[0x00, 0x01]); // SegWit marker + flag.
 
     push_varint(&mut raw, 1);
-    raw.extend_from_slice(&[0xff; 32]);
+    // Coinbase input spends the special null outpoint: zero hash + 0xffffffff index.
+    raw.extend_from_slice(&[0x00; 32]);
     raw.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
     push_bytes(&mut raw, &script_sig);
     raw.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
@@ -62,6 +63,15 @@ pub fn build_coinbase(spec: &CoinbaseSpec) -> Result<CoinbaseTx> {
 
 #[must_use]
 pub fn bip34_height_push(height: u64) -> Vec<u8> {
+    // Match Bitcoin Core's `CScript() << nHeight` encoding used by the BIP34
+    // consensus check. Small integers are encoded as OP_N, not as raw pushdata.
+    if height == 0 {
+        return vec![0x00]; // OP_0
+    }
+    if (1..=16).contains(&height) {
+        return vec![0x50 + height as u8]; // OP_1 .. OP_16
+    }
+
     let mut encoded = height.to_le_bytes().to_vec();
     while encoded.last() == Some(&0) && encoded.len() > 1 {
         encoded.pop();
@@ -92,22 +102,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bip34_height_is_minimally_little_endian() {
-        assert_eq!(hex::encode(bip34_height_push(1)), "0101");
+    fn bip34_height_matches_bitcoin_core_scriptnum_push() {
+        assert_eq!(hex::encode(bip34_height_push(0)), "00");
+        assert_eq!(hex::encode(bip34_height_push(1)), "51");
+        assert_eq!(hex::encode(bip34_height_push(16)), "60");
+        assert_eq!(hex::encode(bip34_height_push(17)), "0111");
         assert_eq!(hex::encode(bip34_height_push(256)), "020001");
     }
 
-    #[test]
-    fn coinbase_contains_witness_commitment_prefix() {
-        let spec = CoinbaseSpec {
+    fn sample_spec() -> CoinbaseSpec {
+        CoinbaseSpec {
             height: 1,
             value_sats: 50_0000_0000,
             payout_script: vec![0x51],
             witness_commitment: [0x11; 32],
             extranonce: b"ex".to_vec(),
             miner_tag: b"miner_btc".to_vec(),
-        };
-        let coinbase = build_coinbase(&spec).unwrap();
+        }
+    }
+
+    #[test]
+    fn coinbase_contains_witness_commitment_prefix() {
+        let coinbase = build_coinbase(&sample_spec()).unwrap();
         assert!(hex::encode(coinbase.raw).contains("6a24aa21a9ed"));
+    }
+
+    #[test]
+    fn coinbase_input_uses_null_prevout_hash() {
+        let coinbase = build_coinbase(&sample_spec()).unwrap();
+        // version(4) + segwit marker/flag(2) + vin_count(1), then 32-byte null prevout hash.
+        assert_eq!(&coinbase.raw[7..39], &[0u8; 32]);
+        assert_eq!(&coinbase.raw[39..43], &0xffff_ffffu32.to_le_bytes());
     }
 }
