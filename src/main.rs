@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use miner_btc::config::{Cli, Command};
 use miner_btc::crypto::internal_le_to_display_be;
+use miner_btc::dashboard::{serve_dashboard, DashboardSnapshot};
+use miner_btc::hardware::{BitaxeAdapter, DeviceEndpoint, MinerDevice};
 use miner_btc::miner::mine_from_rpc_template;
 use miner_btc::rpc::RpcClient;
 use miner_btc::submit::submit_candidate;
@@ -53,6 +55,20 @@ fn main() -> Result<()> {
             } else {
                 println!("dry-run only; add --submit to call submitblock");
             }
+        }
+        Command::Dashboard(args) => {
+            let adapter = BitaxeAdapter::new(DeviceEndpoint::new(
+                args.device_kind,
+                args.device_host,
+                args.device_port,
+            ));
+            let snapshot = DashboardSnapshot {
+                title: "miner_btc dashboard".to_string(),
+                devices: vec![adapter.status()?],
+                stratum_state: "Disconnected".to_string(),
+            };
+            println!("serving miner_btc dashboard on http://{}", args.bind);
+            serve_dashboard(&args.bind, snapshot)?;
         }
     }
     Ok(())

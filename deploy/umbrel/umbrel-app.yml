@@ -1,0 +1,23 @@
+manifestVersion: 1
+id: miner-btc-dashboard
+name: miner_btc Dashboard
+tagline: Local-first Bitcoin miner scaffold dashboard
+category: bitcoin
+version: "0.1.0"
+port: 8080
+description: >-
+  Local-first dashboard for miner_btc. Shows Stratum runtime state and miner device
+  adapter status without storing pool credentials in the image.
+developer: odsbaron
+website: https://github.com/odsbaron/miner_btc
+repo: https://github.com/odsbaron/miner_btc
+support: https://github.com/odsbaron/miner_btc/issues
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: odsbaron
+submission: https://github.com/odsbaron/miner_btc
+releaseNotes: >-
+  Adds Docker dashboard deployment, Stratum share target math, extranonce rolling,
+  CPU worker dispatcher, and safe hardware adapter abstractions.

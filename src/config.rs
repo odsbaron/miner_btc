@@ -24,6 +24,9 @@ pub enum Command {
     /// By default this is dry-run and only prints the candidate block hash.
     /// Add --submit to call submitblock if a valid header is found.
     Regtest(RegtestArgs),
+
+    /// Serve a local-first miner status dashboard for Docker/Umbrel style deployment.
+    Dashboard(DashboardArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -64,4 +67,23 @@ pub struct RegtestArgs {
     /// this prevents accidental infinite CPU loops with high-difficulty targets.
     #[arg(long, default_value_t = 5_000_000)]
     pub max_nonce: u32,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct DashboardArgs {
+    /// Dashboard bind address.
+    #[arg(long, env = "MINER_DASHBOARD_ADDR", default_value = "0.0.0.0:8080")]
+    pub bind: String,
+
+    /// Optional device kind label: cgminer, bitaxe, avalon-q.
+    #[arg(long, env = "MINER_DEVICE_KIND", default_value = "bitaxe")]
+    pub device_kind: String,
+
+    /// Optional device host shown in the dashboard.
+    #[arg(long, env = "MINER_DEVICE_HOST", default_value = "127.0.0.1")]
+    pub device_host: String,
+
+    /// Optional device port shown in the dashboard.
+    #[arg(long, env = "MINER_DEVICE_PORT", default_value_t = 80)]
+    pub device_port: u16,
 }

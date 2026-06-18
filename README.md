@@ -38,16 +38,22 @@ Implemented:
 - automated Bitcoin Core regtest acceptance script.
 - automated non-empty mempool block script (`nTx >= 2`).
 - Stratum v1 message/parser skeleton with local mock-pool handshake test.
+- Stratum share target / difficulty math.
+- fixed-width little-endian extranonce2 rolling.
+- CPU worker dispatcher for educational share scanning.
+- reconnect policy/runtime state for an async Stratum client loop.
+- dry-run cgminer / Bitaxe / Avalon adapter interfaces.
 - local-first hardware/dashboard abstraction inspired by MinerWatch / Avalon Q Controller.
+- Docker Compose dashboard deployment with health endpoint.
 - unit and integration tests for critical serialization / hashing / protocol boundaries.
 
 Not implemented yet:
 
-- production Stratum reconnecting miner loop.
-- ASIC/cgminer/Bitaxe/Avalon device adapters.
+- production Stratum share submission loop against public pools.
+- live ASIC/cgminer/Bitaxe/Avalon device mutation APIs; current adapters are safe dry-run interfaces.
 - full transaction policy engine; this trusts Bitcoin Core's template.
-- dynamic extranonce / ntime rolling after nonce space exhaustion.
-- production observability / metrics dashboard.
+- ntime/version rolling after nonce and extranonce search-space exhaustion.
+- production metrics persistence and authentication for the dashboard.
 
 ## Repository layout
 
@@ -65,13 +71,20 @@ src/
   miner.rs      orchestration from RPC template to candidate block
   submit.rs     submitblock wrapper
   crypto.rs     sha256d, hash endian conversion, target comparison
-  stratum.rs    Stratum v1 parser/client-line skeleton
+  stratum.rs    Stratum v1 parser, difficulty target, extranonce, reconnect state
+  worker.rs     CPU worker dispatcher/share scanner
   hardware.rs   local-first miner-device/dashboard abstraction
+  dashboard.rs  small local HTTP dashboard and health endpoint
 scripts/
   regtest_acceptance.sh      coinbase-only submitblock acceptance test
   regtest_nonempty_block.sh  mempool transaction inclusion acceptance test
+deploy/
+  umbrel/umbrel-app.yml      Umbrel-style app metadata
 docs/
   bitcoinminer-topic-integration.md
+  docker-deployment.md
+Dockerfile
+docker-compose.yml
 ```
 
 ## Build and test
@@ -84,6 +97,20 @@ cargo run -- doctor
 ./scripts/regtest_acceptance.sh
 ./scripts/regtest_nonempty_block.sh
 ```
+
+## Docker dashboard deployment
+
+```bash
+docker compose up --build -d
+python3 - <<'PY'
+import socket
+s=socket.create_connection(('127.0.0.1',8080),3)
+s.sendall(b'GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+print(s.recv(4096).decode())
+PY
+```
+
+Open <http://127.0.0.1:8080/> for the local dashboard. The compose file binds only to localhost by default.
 
 ## Regtest usage
 

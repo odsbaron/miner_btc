@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PoolConfig {
@@ -14,7 +15,7 @@ impl PoolConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum WorkMode {
     Eco,
     Standard,
@@ -34,7 +35,7 @@ impl std::fmt::Display for WorkMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DeviceStatus {
     pub name: String,
     pub online: bool,
@@ -78,3 +79,71 @@ pub trait MinerDevice {
     fn set_work_mode(&self, mode: WorkMode) -> Result<()>;
     fn standby(&self) -> Result<()>;
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceEndpoint {
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+}
+
+impl DeviceEndpoint {
+    #[must_use]
+    pub fn new(kind: impl Into<String>, host: impl Into<String>, port: u16) -> Self {
+        Self {
+            kind: kind.into(),
+            host: host.into(),
+            port,
+        }
+    }
+
+    #[must_use]
+    pub fn label(&self) -> String {
+        format!("{}@{}:{}", self.kind, self.host, self.port)
+    }
+}
+
+macro_rules! dry_run_adapter {
+    ($name:ident) => {
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            endpoint: DeviceEndpoint,
+        }
+
+        impl $name {
+            #[must_use]
+            pub fn new(endpoint: DeviceEndpoint) -> Self {
+                Self { endpoint }
+            }
+        }
+
+        impl MinerDevice for $name {
+            fn status(&self) -> Result<DeviceStatus> {
+                Ok(DeviceStatus {
+                    name: self.endpoint.label(),
+                    online: false,
+                    hashrate_ths: 0.0,
+                    temperature_c: None,
+                    active_pool: None,
+                    work_mode: Some(WorkMode::Standby),
+                })
+            }
+
+            fn set_pool(&self, _pool: &PoolConfig) -> Result<()> {
+                Ok(())
+            }
+
+            fn set_work_mode(&self, _mode: WorkMode) -> Result<()> {
+                Ok(())
+            }
+
+            fn standby(&self) -> Result<()> {
+                Ok(())
+            }
+        }
+    };
+}
+
+dry_run_adapter!(CgminerAdapter);
+dry_run_adapter!(BitaxeAdapter);
+dry_run_adapter!(AvalonAdapter);

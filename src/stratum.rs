@@ -1,9 +1,137 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use num_bigint::BigUint;
+use num_traits::{One, ToPrimitive};
 use serde::Serialize;
 use serde_json::Value;
+
+const DIFF1_TARGET_HEX: &str = "00000000ffff000000000000000000000000000000000000000000000000000000";
+
+pub fn difficulty_to_target_be_hex(difficulty: f64) -> Result<String> {
+    if !difficulty.is_finite() || difficulty <= 0.0 {
+        bail!("stratum difficulty must be positive and finite");
+    }
+    let diff1 = BigUint::parse_bytes(DIFF1_TARGET_HEX.as_bytes(), 16)
+        .context("parse diff1 target constant")?;
+    let scaled = if (difficulty.fract()).abs() < f64::EPSILON {
+        let divisor = BigUint::from(difficulty.to_u64().context("difficulty too large")?);
+        diff1 / divisor
+    } else {
+        let scale = 1_000_000u64;
+        let numerator = diff1 * BigUint::from(scale);
+        let divisor = BigUint::from((difficulty * scale as f64).round() as u64);
+        numerator / divisor
+    };
+    Ok(format!("{scaled:0>64x}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extranonce2Roller {
+    width: usize,
+    next: u128,
+}
+
+impl Extranonce2Roller {
+    #[must_use]
+    pub fn new(width: usize) -> Self {
+        Self { width, next: 0 }
+    }
+
+    #[must_use]
+    pub fn with_start(width: usize, start: u128) -> Self {
+        Self { width, next: start }
+    }
+
+    pub fn next_hex(&mut self) -> Result<String> {
+        if self.width == 0 || self.width > 16 {
+            bail!("extranonce2 width must be between 1 and 16 bytes");
+        }
+        let limit = BigUint::one() << (self.width * 8);
+        if BigUint::from(self.next) >= limit {
+            bail!("extranonce2 exhausted for {} bytes", self.width);
+        }
+        let bytes = self.next.to_le_bytes();
+        let hex = hex::encode(&bytes[..self.width]);
+        self.next += 1;
+        Ok(hex)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReconnectPolicy {
+    base_delay_secs: u64,
+    max_delay_secs: u64,
+}
+
+impl ReconnectPolicy {
+    #[must_use]
+    pub fn new(base_delay_secs: u64, max_delay_secs: u64) -> Self {
+        Self {
+            base_delay_secs: base_delay_secs.max(1),
+            max_delay_secs: max_delay_secs.max(1),
+        }
+    }
+
+    #[must_use]
+    pub fn delay_secs(&self, attempt: u32) -> u64 {
+        self.base_delay_secs
+            .saturating_mul(2u64.saturating_pow(attempt))
+            .min(self.max_delay_secs)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting { attempt: u32 },
+    Connected,
+}
+
+#[derive(Debug, Clone)]
+pub struct StratumRuntime {
+    policy: ReconnectPolicy,
+    state: ConnectionState,
+    total_failures: u64,
+}
+
+impl StratumRuntime {
+    #[must_use]
+    pub fn new(policy: ReconnectPolicy) -> Self {
+        Self {
+            policy,
+            state: ConnectionState::Disconnected,
+            total_failures: 0,
+        }
+    }
+
+    pub fn record_connect_failure(&mut self) -> u64 {
+        self.total_failures += 1;
+        let next_attempt = self.current_attempt() + 1;
+        self.state = ConnectionState::Connecting {
+            attempt: next_attempt,
+        };
+        self.policy.delay_secs(next_attempt.saturating_sub(1))
+    }
+
+    pub fn record_connected(&mut self) {
+        self.state = ConnectionState::Connected;
+    }
+
+    #[must_use]
+    pub fn total_failures(&self) -> u64 {
+        self.total_failures
+    }
+
+    #[must_use]
+    pub fn current_attempt(&self) -> u32 {
+        match self.state {
+            ConnectionState::Connecting { attempt } => attempt,
+            ConnectionState::Disconnected | ConnectionState::Connected => 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscribeResponse {
