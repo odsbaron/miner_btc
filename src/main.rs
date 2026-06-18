@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use miner_btc::config::{Cli, Command};
 use miner_btc::crypto::internal_le_to_display_be;
-use miner_btc::dashboard::{serve_dashboard, DashboardSnapshot};
+use miner_btc::dashboard::{
+    serve_dashboard_with_auth, DashboardAuth, DashboardSnapshot, MetricsStore,
+};
 use miner_btc::hardware::{BitaxeAdapter, DeviceEndpoint, MinerDevice};
 use miner_btc::miner::mine_from_rpc_template;
 use miner_btc::rpc::RpcClient;
@@ -62,13 +64,21 @@ fn main() -> Result<()> {
                 args.device_host,
                 args.device_port,
             ));
+            let metrics_store = MetricsStore::new(args.metrics_path.clone().into());
+            let metrics = metrics_store.load().ok();
             let snapshot = DashboardSnapshot {
                 title: "miner_btc dashboard".to_string(),
                 devices: vec![adapter.status()?],
                 stratum_state: "Disconnected".to_string(),
+                metrics,
+            };
+            let auth = if args.dashboard_token.is_empty() {
+                DashboardAuth::disabled()
+            } else {
+                DashboardAuth::bearer(args.dashboard_token)
             };
             println!("serving miner_btc dashboard on http://{}", args.bind);
-            serve_dashboard(&args.bind, snapshot)?;
+            serve_dashboard_with_auth(&args.bind, snapshot, auth)?;
         }
     }
     Ok(())

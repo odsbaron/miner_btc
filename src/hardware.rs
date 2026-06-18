@@ -147,3 +147,97 @@ macro_rules! dry_run_adapter {
 dry_run_adapter!(CgminerAdapter);
 dry_run_adapter!(BitaxeAdapter);
 dry_run_adapter!(AvalonAdapter);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveWritePolicy {
+    DryRun,
+    AllowWrites,
+}
+
+impl LiveWritePolicy {
+    pub fn guard(self) -> Result<()> {
+        match self {
+            Self::AllowWrites => Ok(()),
+            Self::DryRun => anyhow::bail!("live ASIC writes require explicit AllowWrites policy"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpApiCommand {
+    pub method: String,
+    pub url: String,
+    pub path: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CgminerApiCommand {
+    pub json_line: String,
+}
+
+impl CgminerApiCommand {
+    #[must_use]
+    pub fn switch_pool(pool_index: u32) -> Self {
+        Self {
+            json_line: format!(
+                r#"{{"command":"switchpool","parameter":"{pool_index}"}}
+"#
+            ),
+        }
+    }
+
+    #[must_use]
+    pub fn add_pool(pool: &PoolConfig) -> Self {
+        Self {
+            json_line: format!(
+                r#"{{"command":"addpool","parameter":"{},{},{}"}}
+"#,
+                pool.url, pool.username, pool.password
+            ),
+        }
+    }
+}
+
+pub struct BitaxeApiCommand;
+
+impl BitaxeApiCommand {
+    #[must_use]
+    pub fn set_pool(
+        endpoint: &DeviceEndpoint,
+        url: &str,
+        username: &str,
+        password: &str,
+    ) -> HttpApiCommand {
+        HttpApiCommand {
+            method: "POST".to_string(),
+            url: format!(
+                "http://{}:{}{}",
+                endpoint.host, endpoint.port, "/api/system"
+            ),
+            path: "/api/system".to_string(),
+            body: serde_json::json!({
+                "stratumURL": url,
+                "stratumUser": username,
+                "stratumPassword": password,
+            })
+            .to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvalonApiCommand {
+    pub json_body: String,
+}
+
+impl AvalonApiCommand {
+    #[must_use]
+    pub fn set_voltage_offset(offset: i32) -> Self {
+        Self {
+            json_body:
+                serde_json::json!({ "command": "set_voltage_offset", "voltage_offset": offset })
+                    .to_string(),
+        }
+    }
+}

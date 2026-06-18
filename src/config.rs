@@ -86,4 +86,16 @@ pub struct DashboardArgs {
     /// Optional device port shown in the dashboard.
     #[arg(long, env = "MINER_DEVICE_PORT", default_value_t = 80)]
     pub device_port: u16,
+
+    /// Optional bearer token for dashboard/API access. Empty disables auth.
+    #[arg(long, env = "MINER_DASHBOARD_TOKEN", default_value = "")]
+    pub dashboard_token: String,
+
+    /// Metrics JSON path for persistence.
+    #[arg(
+        long,
+        env = "MINER_METRICS_PATH",
+        default_value = "/tmp/miner-btc-metrics.json"
+    )]
+    pub metrics_path: String,
 }

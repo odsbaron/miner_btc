@@ -53,6 +53,7 @@ fn dashboard_html_renders_statuses_without_pool_passwords() {
             work_mode: Some(WorkMode::Standby),
         }],
         stratum_state: "Disconnected".to_string(),
+        metrics: None,
     };
 
     let html = render_status_html(&snapshot);

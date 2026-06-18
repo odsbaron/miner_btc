@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 
 use crate::hardware::DeviceStatus;
 
@@ -10,6 +12,81 @@ pub struct DashboardSnapshot {
     pub title: String,
     pub devices: Vec<DeviceStatus>,
     pub stratum_state: String,
+    #[serde(default)]
+    pub metrics: Option<MetricsSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MetricsSnapshot {
+    pub submitted_shares: u64,
+    pub accepted_shares: u64,
+    pub rejected_shares: u64,
+    pub reconnects: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetricsStore {
+    path: PathBuf,
+}
+
+impl MetricsStore {
+    #[must_use]
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    pub fn save(&self, snapshot: &MetricsSnapshot) -> Result<()> {
+        let json = serde_json::to_string_pretty(snapshot).context("serialize metrics snapshot")?;
+        std::fs::write(&self.path, json)
+            .with_context(|| format!("write metrics {}", self.path.display()))
+    }
+
+    pub fn load(&self) -> Result<MetricsSnapshot> {
+        let json = std::fs::read_to_string(&self.path)
+            .with_context(|| format!("read metrics {}", self.path.display()))?;
+        serde_json::from_str(&json).context("parse metrics snapshot")
+    }
+}
+
+#[derive(Clone)]
+pub struct DashboardAuth {
+    bearer_token: Option<String>,
+}
+
+impl DashboardAuth {
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self { bearer_token: None }
+    }
+
+    #[must_use]
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self {
+            bearer_token: Some(token.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn is_authorized(&self, request_text: &str) -> bool {
+        let Some(token) = &self.bearer_token else {
+            return true;
+        };
+        request_text
+            .lines()
+            .any(|line| line.trim() == format!("Authorization: Bearer {token}"))
+    }
+}
+
+impl fmt::Debug for DashboardAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DashboardAuth")
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 #[must_use]
@@ -61,12 +138,29 @@ pub fn render_status_json(snapshot: &DashboardSnapshot) -> String {
 }
 
 pub fn serve_dashboard(addr: &str, snapshot: DashboardSnapshot) -> Result<()> {
+    serve_dashboard_with_auth(addr, snapshot, DashboardAuth::disabled())
+}
+
+pub fn serve_dashboard_with_auth(
+    addr: &str,
+    snapshot: DashboardSnapshot,
+    auth: DashboardAuth,
+) -> Result<()> {
     let listener = TcpListener::bind(addr).with_context(|| format!("bind dashboard {addr}"))?;
     for stream in listener.incoming() {
         let mut stream = stream.context("accept dashboard client")?;
-        let mut request = [0u8; 1024];
+        let mut request = [0u8; 2048];
         let bytes = stream.read(&mut request).unwrap_or(0);
         let request_text = String::from_utf8_lossy(&request[..bytes]);
+        if !auth.is_authorized(&request_text) {
+            write_response(
+                &mut stream,
+                "401 Unauthorized",
+                "text/plain",
+                "unauthorized",
+            )?;
+            continue;
+        }
         let (content_type, body) = if request_text.starts_with("GET /health") {
             ("application/json", "{\"status\":\"ok\"}".to_string())
         } else if request_text.starts_with("GET /api/status") {
@@ -74,15 +168,24 @@ pub fn serve_dashboard(addr: &str, snapshot: DashboardSnapshot) -> Result<()> {
         } else {
             ("text/html; charset=utf-8", render_status_html(&snapshot))
         };
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream
-            .write_all(response.as_bytes())
-            .context("write dashboard response")?;
+        write_response(&mut stream, "200 OK", content_type, &body)?;
     }
     Ok(())
+}
+
+fn write_response(
+    stream: &mut impl Write,
+    status: &str,
+    content_type: &str,
+    body: &str,
+) -> Result<()> {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .context("write dashboard response")
 }
 
 fn escape_html(input: &str) -> String {

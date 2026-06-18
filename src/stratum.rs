@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use num_bigint::BigUint;
@@ -332,5 +333,141 @@ impl LineClient {
             anyhow::bail!("stratum connection closed");
         }
         Ok(line)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtimeRoller {
+    base: u32,
+    max_delta: u32,
+    next_delta: u32,
+}
+
+impl NtimeRoller {
+    pub fn new(base_hex: &str, max_delta: u32) -> Result<Self> {
+        let base = u32::from_str_radix(base_hex, 16).context("ntime must be 4-byte hex")?;
+        Ok(Self {
+            base,
+            max_delta,
+            next_delta: 0,
+        })
+    }
+
+    pub fn next_hex(&mut self) -> Result<String> {
+        if self.next_delta > self.max_delta {
+            bail!("ntime rolling exhausted after {} seconds", self.max_delta);
+        }
+        let value = self
+            .base
+            .checked_add(self.next_delta)
+            .context("ntime overflow")?;
+        self.next_delta += 1;
+        Ok(format!("{value:08x}"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionRollingMask {
+    base: u32,
+    mask: u32,
+}
+
+impl VersionRollingMask {
+    pub fn new(base_hex: &str, mask_hex: &str) -> Result<Self> {
+        Ok(Self {
+            base: u32::from_str_radix(base_hex, 16).context("version must be 4-byte hex")?,
+            mask: u32::from_str_radix(mask_hex, 16)
+                .context("version rolling mask must be 4-byte hex")?,
+        })
+    }
+
+    pub fn apply(&self, value: u32) -> Result<String> {
+        if value & !self.mask != 0 {
+            bail!("version rolling value uses bits outside negotiated mask");
+        }
+        Ok(format!("{:08x}", self.base | (value & self.mask)))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StratumLoopConfig {
+    pub addr: SocketAddr,
+    pub username: String,
+    pub password: String,
+    pub max_shares: usize,
+    pub read_timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StratumLoopSummary {
+    pub submitted_shares: usize,
+    pub reconnects: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StratumMinerLoop {
+    config: StratumLoopConfig,
+    runtime: StratumRuntime,
+}
+
+impl StratumMinerLoop {
+    #[must_use]
+    pub fn new(config: StratumLoopConfig) -> Self {
+        Self {
+            config,
+            runtime: StratumRuntime::new(ReconnectPolicy::new(1, 30)),
+        }
+    }
+
+    pub fn run_once(&mut self) -> Result<StratumLoopSummary> {
+        let stream = TcpStream::connect(self.config.addr)
+            .with_context(|| format!("connect stratum pool {}", self.config.addr))?;
+        stream
+            .set_read_timeout(Some(self.config.read_timeout))
+            .context("set stratum read timeout")?;
+        stream
+            .set_write_timeout(Some(self.config.read_timeout))
+            .context("set stratum write timeout")?;
+        let mut client = LineClient {
+            reader: BufReader::new(stream.try_clone().context("clone stratum stream")?),
+            stream,
+        };
+        self.runtime.record_connected();
+        client.send(&ClientRequest::subscribe(1))?;
+        client.send(&ClientRequest::authorize(
+            2,
+            &self.config.username,
+            &self.config.password,
+        ))?;
+
+        let mut extranonce2 = Extranonce2Roller::new(4);
+        let mut submitted = 0usize;
+        while submitted < self.config.max_shares {
+            let line = client.read_line()?;
+            if line.contains("\"id\":1") {
+                let sub = SubscribeResponse::from_json(&line)?;
+                extranonce2 = Extranonce2Roller::new(sub.extranonce2_size);
+                continue;
+            }
+            let message = ServerMessage::from_json(&line)?;
+            if let ServerMessage::Notify(job) = message {
+                let extra = extranonce2.next_hex()?;
+                let ntime = NtimeRoller::new(&job.ntime, 0)?.next_hex()?;
+                let nonce = "00000000";
+                client.send(&ClientRequest::submit(
+                    3 + submitted as u64,
+                    &self.config.username,
+                    &job.job_id,
+                    &extra,
+                    &ntime,
+                    nonce,
+                ))?;
+                submitted += 1;
+            }
+        }
+        Ok(StratumLoopSummary {
+            submitted_shares: submitted,
+            reconnects: self.runtime.total_failures(),
+        })
     }
 }

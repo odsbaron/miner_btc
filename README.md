@@ -42,18 +42,22 @@ Implemented:
 - fixed-width little-endian extranonce2 rolling.
 - CPU worker dispatcher for educational share scanning.
 - reconnect policy/runtime state for an async Stratum client loop.
+- mock public-pool Stratum loop that subscribes, authorizes, consumes notify, and submits shares.
+- ntime rolling and BIP320-style version rolling mask helper.
 - dry-run cgminer / Bitaxe / Avalon adapter interfaces.
+- live-write command builders for cgminer / Bitaxe / Avalon APIs gated by explicit opt-in.
 - local-first hardware/dashboard abstraction inspired by MinerWatch / Avalon Q Controller.
+- dashboard bearer-token auth primitive and JSON metrics persistence.
 - Docker Compose dashboard deployment with health endpoint.
 - unit and integration tests for critical serialization / hashing / protocol boundaries.
 
 Not implemented yet:
 
 - production Stratum share submission loop against public pools.
-- live ASIC/cgminer/Bitaxe/Avalon device mutation APIs; current adapters are safe dry-run interfaces.
+- direct live HTTP/TCP writes to physical ASICs from the default dashboard; current live API builders require explicit opt-in and should be wired only after confirming the target device.
 - full transaction policy engine; this trusts Bitcoin Core's template.
-- ntime/version rolling after nonce and extranonce search-space exhaustion.
-- production metrics persistence and authentication for the dashboard.
+- fully autonomous profitable mainnet mining; this remains a research/scaffold project unless connected to real ASIC capacity and a real pool.
+- authenticated dashboard write actions; status/auth/metrics primitives are present, but dangerous device writes stay gated.
 
 ## Repository layout
 
